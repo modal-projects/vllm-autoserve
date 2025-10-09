@@ -1,23 +1,29 @@
 from asyncio.events import Handle
 import os
 import modal
+from fastapi import Header, HTTPException
+from pydantic import BaseModel
+import pathlib
 
 from vllm_autoserve import common
-from vllm_autoserve import server
 
-gateway_image = modal.Image.debian_slim(python_version="3.12").uv_pip_install(
-    "fastapi",
+
+gateway_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .uv_pip_install("fastapi", "huggingface_hub")
+    .add_local_python_source("vllm_autoserve")
 )
 vllm_gateway_auth = modal.Secret.from_name(
     "vllm-gateway-auth", required_keys=["VLLM_GATEWAY_AUTH"]
 )
 
-with gateway_image.imports():
-    from fastapi import Header, HTTPException
-    from pydantic import BaseModel
 
-    class GatewayRequest(BaseModel):
-        model_path: str
+with gateway_image.imports():
+    from huggingface_hub import model_info
+
+
+class GatewayRequest(BaseModel):
+    model_path: str
 
 
 @common.app.cls(
@@ -49,24 +55,60 @@ class VllmGateway:
         if token != self.expected_token:
             raise HTTPException(status_code=403, detail="Invalid authentication token")
 
-        # TODO sanitize model_path
-        try:
-            cls = modal.Cls.from_name(common.app.name, "VLLMServe")
-            vllm_url = cls(model_path=request.model_path).serve.get_web_url()
-        except modal.exception.NotFoundError:
-            # block until server is live
-            vllm_url = server.VLLMServe(
-                model_path=request.model_path
-            ).serve.get_web_url()
+        # Sanitize and validate model_path
+        sanitized_model_path = self._sanitize_model_path(request.model_path)
 
-        print(f"Model path: {request.model_path}")
-        print(f"Inference")
-
+        cls = modal.Cls.from_name(common.app.name, "VLLMServe")
+        requested_func = cls(model_path=sanitized_model_path)
+        requested_func.boot.remote()
+        vllm_url = requested_func.serve.get_web_url()
         return {
             "status": "ok",
-            "model_path": request.model_path,
+            "model_path": sanitized_model_path,
             "inference_server_url": vllm_url,
         }
+
+    def _sanitize_model_path(self, model_path: str) -> str:
+        """
+        Sanitize model_path to extract the HuggingFace repo identifier.
+        Handles both repo IDs (e.g., 'org/model') and full URLs (e.g., 'https://huggingface.co/org/model').
+        """
+
+        # Remove trailing slashes
+        model_path = model_path.rstrip("/")
+
+        # Check if it's a URL and extract the repo ID
+        if model_path.startswith("http://") or model_path.startswith("https://"):
+            # Parse the URL to extract repo identifier
+            # Expected format: https://huggingface.co/org/model
+            parts = model_path.split("huggingface.co/")
+            if len(parts) == 2:
+                repo_id = parts[1]
+            else:
+                raise HTTPException(
+                    status_code=400, detail="Invalid HuggingFace URL format"
+                )
+        else:
+            # Assume it's already a repo identifier
+            repo_id = model_path
+
+        # Validate the repo identifier format (should be org/model)
+        if "/" not in repo_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid model path format. Expected 'org/model' or HuggingFace URL",
+            )
+
+        # Verify the model exists on HuggingFace
+        try:
+            model_info(repo_id)
+        except Exception as e:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model not found on HuggingFace: {repo_id}. Error: {str(e)}",
+            )
+
+        return repo_id
 
 
 app = common.app

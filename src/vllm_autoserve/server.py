@@ -1,3 +1,4 @@
+import os
 import subprocess
 import time
 
@@ -6,17 +7,23 @@ import modal
 from vllm_autoserve import common
 
 tag = "12.9.1-devel-ubuntu22.04"
-vllm_image = modal.Image.from_registry(
-    f"nvidia/cuda:{tag}", add_python="3.12"
-).uv_pip_install("vllm>=0.11.0", "requests")
+vllm_image = (
+    modal.Image.from_registry(f"nvidia/cuda:{tag}", add_python="3.12")
+    .entrypoint([])
+    .uv_pip_install("vllm>=0.11.0", "requests")
+)
 
 vllm_cache = modal.Volume.from_name("vllm-cache", create_if_missing=True)
+hf_secret_name = os.environ.get("VLLM_AUTOSERVE_SECRET", "autoserve-hf-secret")
+hf_secret = modal.Secret.from_name(hf_secret_name)
 
 with vllm_image.imports():
     import requests
 
 
-@common.app.cls(gpu="H200", image=vllm_image)
+@common.app.cls(
+    gpu="H200:2", image=vllm_image, scaledown_window=30 * 60, secrets=[hf_secret]
+)
 @modal.concurrent(target_inputs=20, max_inputs=100)
 class VLLMServe:
     model_path: str = modal.parameter()
@@ -30,13 +37,16 @@ class VLLMServe:
             "0.0.0.0",
             "--port",
             "8000",
+            "--tensor-parallel-size",
+            "2",
+            "--enforce-eager",
             f"{self.model_path}",
         ]
         self.vllm_process = subprocess.Popen(vllm_cmd)
 
         # Wait for server to be ready
         print("Waiting for vLLM server to be ready...")
-        timeout = 600  # 10 minutes
+        timeout = 30 * 60  # 30 minutes
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
