@@ -10,7 +10,7 @@ tag = "12.9.1-devel-ubuntu22.04"
 vllm_image = (
     modal.Image.from_registry(f"nvidia/cuda:{tag}", add_python="3.12")
     .entrypoint([])
-    .uv_pip_install("vllm>=0.11.0", "requests")
+    .uv_pip_install("vllm>=0.11.0", "requests", "flashinfer-python")
 )
 
 vllm_cache = modal.Volume.from_name("vllm-cache", create_if_missing=True)
@@ -20,7 +20,11 @@ with vllm_image.imports():
 
 
 @common.app.cls(
-    gpu="H200:2", image=vllm_image, scaledown_window=30 * 60, secrets=[common.hf_secret]
+    gpu="H200:2",
+    image=vllm_image,
+    timeout=60 * 60,  # 1 hour, for downloads
+    scaledown_window=15 * 60,  # 15 minutes
+    secrets=[common.hf_secret],
 )
 @modal.concurrent(target_inputs=20, max_inputs=100)
 class VLLMServe:
@@ -60,7 +64,7 @@ class VLLMServe:
                 f"vLLM server did not become ready after {timeout} seconds"
             )
 
-    @modal.web_server(port=8000, startup_timeout=10 * 60)
+    @modal.web_server(port=8000, startup_timeout=60 * 60)
     def serve(self):
         pass
 
