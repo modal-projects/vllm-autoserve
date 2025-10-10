@@ -14,6 +14,9 @@ gateway_image = (
 vllm_gateway_auth = modal.Secret.from_name(
     "vllm-gateway-auth", required_keys=["VLLM_GATEWAY_AUTH"]
 )
+pool_status_cache = modal.Dict.from_name(
+    "vllm-gateway-poolstatus", create_if_missing=True
+)
 
 # Hop-by-hop headers that should not be forwarded (RFC 2616)
 HOP_BY_HOP_HEADERS = {
@@ -67,26 +70,41 @@ class Gateway:
             # standardize model for vllm server pool
             sanitized_model_path = _sanitize_model_path(request.model_path)
 
-            # look up server pool for model
-            VLLM = modal.Cls.from_name(common.app.name, "VLLMServe")
-            vllm_pool = VLLM(model_path=sanitized_model_path)
+            # implement a simple lock for `boot` calls to a given model's server pool
+            # without this, repeated status checks would pile up pending boot calls
+            # and affect autoscaling. the lock ensures only one boot call is in
+            # the pool's input queue at any given time
+            cached_boot_call = await pool_status_cache.get.aio(
+                sanitized_model_path, None
+            )
 
-            # start booting up a server in the pool before returning
-            boot_call = await vllm_pool.boot.spawn.aio()
+            if cached_boot_call is None:
+                # lock is free, try to spawn the server pool
+                VLLM = modal.Cls.from_name(common.app.name, "VLLMServe")
+                vllm_pool = VLLM(model_path=sanitized_model_path)
+                boot_call = await vllm_pool.boot.spawn.aio()
+                await pool_status_cache.put.aio(
+                    sanitized_model_path, boot_call.object_id, skip_if_exists=True
+                )
+            else:
+                # someone else is holding the lock, don't respawn boot
+                boot_call = modal.FunctionCall.from_id(cached_boot_call)
+
             try:
-                boot_call.get(timeout=0.4)
-            # still booting
+                await boot_call.get.aio(timeout=0)
             except asyncio.TimeoutError:
+                # boot call is pending, so server pool is pending
                 return {
                     "status": "pending",
                     "model": sanitized_model_path,
                 }
-            # server is healthy
-            else:
-                return {
-                    "status": "healthy",
-                    "model": sanitized_model_path,
-                }
+
+            # boot call is finished, release the lock
+            pool_status_cache.pop(sanitized_model_path)
+            return {
+                "status": "healthy",
+                "model": sanitized_model_path,
+            }
 
         @web_app.post("/v1/chat/completions")
         async def proxy_chat_completions(
