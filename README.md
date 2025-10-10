@@ -2,9 +2,9 @@ vLLM Autoserve
 =========
 
 ## Setup: Modal Secrets
-- Create gateway secret: `modal secret vllm-gateway-auth VLLM_GATEWAY_AUTH=...`
+- Create gateway secret: `modal secret create vllm-gateway-auth VLLM_GATEWAY_AUTH=...`
   - Hint: use `secrets.token_urlsafe(n_bytes)` to generate.
-- Create huggingface secret: `modal secret autoserve-hf-secret HF_TOKEN=...` or through the Modal dashboard.
+- Create huggingface secret: `modal secret create autoserve-hf-secret HF_TOKEN=...` or through the Modal dashboard.
 
 ## Install this package
 ```
