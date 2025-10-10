@@ -68,7 +68,7 @@ class VLLMServe:
 
     @modal.method()
     def boot(self):
-        pass
+        return "booted"
 
     @modal.exit()
     def down(self):

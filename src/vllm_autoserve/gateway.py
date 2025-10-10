@@ -45,6 +45,29 @@ class VllmGateway:
     async def vllm_gateway(
         self, request: GatewayRequest, authorization: str = Header(None)
     ):
+        self._auth(authorization)
+
+        sanitized_model_path = self._sanitize_model_path(request.model_path)
+
+        cls = modal.Cls.from_name(common.app.name, "VLLMServe")
+        requested_func = cls(model_path=sanitized_model_path)
+        # boot up a vllm server before returning
+        boot_call = requested_func.boot.spawn()
+        result = boot_call.get(timeout=0.4)
+        if result == "booted":
+            vllm_url = requested_func.serve.get_web_url()
+            return {
+                "status": "healthy",
+                "model": sanitized_model_path,
+                "inference_server_url": vllm_url,
+            }
+        else:
+            return {
+                "status": "pending",
+                "model": sanitized_model_path,
+            }
+
+    def _auth(self, authorization):
         # Check Bearer token
         if not authorization or not authorization.startswith("Bearer "):
             raise HTTPException(
@@ -54,19 +77,6 @@ class VllmGateway:
         token = authorization.replace("Bearer ", "", 1)
         if token != self.expected_token:
             raise HTTPException(status_code=403, detail="Invalid authentication token")
-
-        # Sanitize and validate model_path
-        sanitized_model_path = self._sanitize_model_path(request.model_path)
-
-        cls = modal.Cls.from_name(common.app.name, "VLLMServe")
-        requested_func = cls(model_path=sanitized_model_path)
-        requested_func.boot.remote()
-        vllm_url = requested_func.serve.get_web_url()
-        return {
-            "status": "ok",
-            "model_path": sanitized_model_path,
-            "inference_server_url": vllm_url,
-        }
 
     def _sanitize_model_path(self, model_path: str) -> str:
         """
