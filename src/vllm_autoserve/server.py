@@ -14,15 +14,13 @@ vllm_image = (
 )
 
 vllm_cache = modal.Volume.from_name("vllm-cache", create_if_missing=True)
-hf_secret_name = os.environ.get("VLLM_AUTOSERVE_SECRET", "autoserve-hf-secret")
-hf_secret = modal.Secret.from_name(hf_secret_name)
 
 with vllm_image.imports():
     import requests
 
 
 @common.app.cls(
-    gpu="H200:2", image=vllm_image, scaledown_window=30 * 60, secrets=[hf_secret]
+    gpu="H200:2", image=vllm_image, scaledown_window=30 * 60, secrets=[common.hf_secret]
 )
 @modal.concurrent(target_inputs=20, max_inputs=100)
 class VLLMServe:
@@ -62,7 +60,7 @@ class VLLMServe:
                 f"vLLM server did not become ready after {timeout} seconds"
             )
 
-    @modal.web_server(port=8000)
+    @modal.web_server(port=8000, startup_timeout=10 * 60)
     def serve(self):
         pass
 

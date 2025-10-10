@@ -1,12 +1,10 @@
-from asyncio.events import Handle
 import os
+
 import modal
 from fastapi import Header, HTTPException
 from pydantic import BaseModel
-import pathlib
 
 from vllm_autoserve import common
-
 
 gateway_image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -29,7 +27,7 @@ class GatewayRequest(BaseModel):
 @common.app.cls(
     image=gateway_image,
     volumes={"/root/.cache/huggingface": common.hf_cache},
-    secrets=[vllm_gateway_auth],
+    secrets=[vllm_gateway_auth, common.hf_secret],
     min_containers=1,
 )
 @modal.concurrent(max_inputs=800)
