@@ -19,10 +19,10 @@ modal deploy -m vllm_autoserve.gateway
 ## Usage
 Assuming the `vllm-gateway-auth` secret was saved at `.vllm-gateway-auth`, spin up a new container pool for a model:
 ```console
-$ curl -LX POST https://{WORKSPACE}-{ENVIRONMENT}--gateway.modal.run/up -H "Authorization: Bearer $(cat .vllm-gateway-auth)" -H "Content-Type: application/json" -d '{"model_path": "Qwen/Qwen3-Next-80B-A3B-Instruct"}'
+$ curl -LX POST https://{WORKSPACE}-{ENVIRONMENT}--gateway.modal.run/v1/up -H "Authorization: Bearer $(cat .vllm-gateway-auth)" -H "Content-Type: application/json" -d '{"model_path": "Qwen/Qwen3-Next-80B-A3B-Instruct"}'
 {"status":"pending","model":"Qwen/Qwen3-Next-80B-A3B-Instruct"}
 
-$ curl -LX POST https://{WORKSPACE}-{ENVIRONMENT}--gateway.modal.run/up -H "Authorization: Bearer $(cat .vllm-gateway-auth)" -H "Content-Type: application/json" -d '{"model_path": "Qwen/Qwen3-Next-80B-A3B-Instruct"}'
+$ curl -LX POST https://{WORKSPACE}-{ENVIRONMENT}--gateway.modal.run/v1/up -H "Authorization: Bearer $(cat .vllm-gateway-auth)" -H "Content-Type: application/json" -d '{"model_path": "Qwen/Qwen3-Next-80B-A3B-Instruct"}'
 {"status":"healthy","model":"Qwen/Qwen3-Next-80B-A3B-Instruct"}
 ```
 Then, request chat completions directly from the gateway:
