@@ -62,7 +62,7 @@ class Gateway:
         class GatewayRequest(BaseModel):
             model_path: str
 
-        @web_app.post("/up")
+        @web_app.post("/v1/up")
         async def up(request: GatewayRequest, authorization: str = Header(None)):
             # auth
             self._auth(authorization)
