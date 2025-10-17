@@ -89,18 +89,33 @@ class Gateway:
             else:
                 # someone else is holding the lock, don't respawn boot
                 boot_call = modal.FunctionCall.from_id(cached_boot_call)
-
             try:
-                await boot_call.get.aio(timeout=0)
+                result = await boot_call.get.aio(timeout=0)
             except asyncio.TimeoutError:
                 # boot call is pending, so server pool is pending
                 return {
                     "status": "pending",
                     "model": sanitized_model_path,
                 }
-
+            except Exception as e:
+                # boot call errored out, release the lock
+                await pool_status_cache.pop.aio(sanitized_model_path)
+                return {
+                    "status": "errored",
+                    "model": sanitized_model_path,
+                    "error": e,
+                }
             # boot call is finished, release the lock
-            pool_status_cache.pop(sanitized_model_path)
+            await pool_status_cache.pop.aio(sanitized_model_path)
+
+            if isinstance(result, str):
+                # result is an error message
+                return {
+                    "status": "errored",
+                    "model": sanitized_model_path,
+                    "error": result,
+                }
+
             return {
                 "status": "healthy",
                 "model": sanitized_model_path,
