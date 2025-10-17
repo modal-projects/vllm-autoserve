@@ -40,6 +40,8 @@ class VLLMServe:
         expected_auth_token = os.environ.get("VLLM_GATEWAY_AUTH")
         model_path_to_load = str(self.model_path)
         peft_info = check_peft.remote(self.model_path, token=hf_token)
+
+        print(f"PEFT inspection result: {peft_info}")
         if not peft_info.is_full_model:
             print(f"Model at {self.model_path} does not appear to be a full model: {peft_info}")
             print(f"Attempting to merge PEFT adapter into base model...")

@@ -70,18 +70,22 @@ def inspect_hf_repo_for_peft(repo_id: str, revision=None, token=None):
         result["base_model_name_or_path"] = base_model_from_card
         result["is_peft_adapter"] = True
         result["detected_from"] = "model_card"
-    else:
-        result["notes"] = result.get("notes", "") + "Base model also found from model card. "
 
 
     # --- 3️⃣ Heuristic: if adapter_model.bin present and no config.json, likely PEFT adapter ---
     if any(f in files for f in ["adapter_model.bin", "adapter_model.safetensors"]) and not any(f == "config.json" for f in files):
         result["is_peft_adapter"] = True
-        result["notes"] += "adapter_model weights found without full model config -> likely adapter. "
 
     # --- 4️⃣ Determine full model ---
     if "config.json" in files and "tokenizer_config.json" in files:
         result["is_full_model"] = True
+
+    # validate there is only a single base model listed
+    if result["base_model_name_or_path"] is not None and isinstance(result["base_model_name_or_path"], list):
+        # check length is 1
+        if len(result["base_model_name_or_path"]) != 1:
+            raise ValueError("Multiple base models found in adapter config, cannot determine single base model.")
+        result["base_model_name_or_path"] = result["base_model_name_or_path"][0]
 
     return PeftInfo(**result)
 
@@ -94,7 +98,7 @@ def inspect_hf_repo_for_peft(repo_id: str, revision=None, token=None):
 )
 def merge_model_and_save_to_volume(base_model_repo: str, peft_repo: str, revision=None, token=None):
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoTokenizer, AutoModelForCausalLM, Qwen2_5_VLForConditionalGeneration
     from peft import PeftModel
 
     print(f"Merging PEFT adapter from {peft_repo} into base model {base_model_repo}...")
@@ -102,20 +106,33 @@ def merge_model_and_save_to_volume(base_model_repo: str, peft_repo: str, revisio
     merged_model_name = peft_repo + "-merged"
     hf_subdir = peft_repo.replace("/", "--")
     # hf cache structure
-    hf_cache_path = f"/root/.cache/huggingface/models--{merged_model_name}"
+    hf_cache_path = f"/root/.cache/huggingface/hub/models--{merged_model_name}"
 
     # 1) load base model (use device_map and dtype for large models)
     print("Loading base model...")
-    base = AutoModelForCausalLM.from_pretrained(
-        base_model_repo,
-        device_map="auto",
-    )
+    supported_model_loaders = [AutoModelForCausalLM, Qwen2_5_VLForConditionalGeneration]
+
+    base = None
+    for loader in supported_model_loaders:
+        try:
+            base = loader.from_pretrained(
+                base_model_repo,
+                device_map="auto",
+                token=token,
+            )
+            print(f"Loaded base model using {loader.__name__}")
+            break
+        except Exception as e:
+            print(f"Failed to load base model with {loader.__name__}: {e}")
+    if base is None:
+        raise ValueError(f"Failed to load base model {base_model_repo} with supported loaders.")
+
     print("Loading tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(base_model_repo)
+    tokenizer = AutoTokenizer.from_pretrained(base_model_repo, token=token)
 
     # 2) load the adapter on top
     print("Loading PEFT adapter...")
-    model_with_adapter = PeftModel.from_pretrained(base, peft_repo, device_map="auto")
+    model_with_adapter = PeftModel.from_pretrained(base, peft_repo, device_map="auto", token=token)
 
     # 3) merge adapter weights into the base model
     # merge_and_unload() returns a transformers model (adapter weights applied)
@@ -124,7 +141,7 @@ def merge_model_and_save_to_volume(base_model_repo: str, peft_repo: str, revisio
 
     # 4) save merged model + tokenizer
     print(f"Saving merged model to {hf_cache_path} ...")
-    merged_model.save_pretrained(merged_model_name)
+    merged_model.save_pretrained(hf_cache_path)
     print("Saving tokenizer...")
-    tokenizer.save_pretrained(merged_model_name)
+    tokenizer.save_pretrained(hf_cache_path)
     return hf_cache_path
