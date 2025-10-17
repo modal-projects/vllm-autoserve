@@ -5,6 +5,7 @@ import time
 import modal
 
 from vllm_autoserve import common
+from vllm_autoserve.hf_utils import get_base_model_from_model_card
 
 tag = "12.9.1-devel-ubuntu22.04"
 vllm_image = (
@@ -13,11 +14,9 @@ vllm_image = (
     .uv_pip_install("vllm>=0.11.0", "requests", "flashinfer-python")
 )
 
-vllm_cache = modal.Volume.from_name("vllm-cache", create_if_missing=True)
 
 with vllm_image.imports():
     import requests
-
 
 @common.app.cls(
     gpu="H200:2",
@@ -25,6 +24,9 @@ with vllm_image.imports():
     timeout=60 * 60,  # 1 hour, for downloads
     scaledown_window=15 * 60,  # 15 minutes
     secrets=[common.hf_secret],
+    volumes={
+        "/root/.cache/huggingface": common.hf_cache,
+    }
 )
 @modal.concurrent(target_inputs=20, max_inputs=100)
 class VLLMServe:
@@ -32,9 +34,39 @@ class VLLMServe:
 
     @modal.enter()
     def up(self):
+        print("Checking if model is PEFT adapter or full model...")
+        check_peft = modal.Function.from_name(common.app.name, common.INSPECT_HF_REPO_FUNC_NAME)
+        hf_token = os.environ.get("HF_TOKEN")
+        expected_auth_token = os.environ.get("VLLM_GATEWAY_AUTH")
+        model_path_to_load = str(self.model_path)
+        peft_info = check_peft.remote(self.model_path, token=hf_token)
+        if not peft_info.is_full_model:
+            print(f"Model at {self.model_path} does not appear to be a full model: {peft_info}")
+            print(f"Attempting to merge PEFT adapter into base model...")
+            merge_peft = modal.Function.from_name(common.app.name, common.MERGE_PEFT_FUNC_NAME)
+            base_model_to_use = peft_info.base_model_name_or_path
+
+            # hacky check for MLX models
+            if peft_info.base_model_name_or_path.startswith("mlx"):
+                print("Detected MLX base model, get original model name from model card...")
+                base_model_from_mlx = get_base_model_from_model_card(
+                    peft_info.base_model_name_or_path, token=hf_token
+                )
+                if base_model_from_mlx is not None:
+                    print(f"Found base model from model card: {base_model_from_mlx}")
+                    base_model_to_use = base_model_from_mlx
+
+            # TODO: remove once ToS issues are resolved
+            # hacky check for google models, test with unsloth version of the model til ToS issues are resolved
+            if base_model_to_use.startswith("google"):
+                base_model_to_use = base_model_to_use.replace("google/", "unsloth/")
+            model_path_to_load = merge_peft.remote(base_model_to_use, self.model_path, token=hf_token)
+
+        print(f"Starting vLLM server with model at: {model_path_to_load}")
         vllm_cmd = [
             "vllm",
             "serve",
+            model_path_to_load,
             "--host",
             "0.0.0.0",
             "--port",
@@ -42,7 +74,8 @@ class VLLMServe:
             "--tensor-parallel-size",
             "2",
             "--enforce-eager",
-            f"{self.model_path}",
+            "--api-key",
+            expected_auth_token,
         ]
         self.vllm_process = subprocess.Popen(vllm_cmd)
 
