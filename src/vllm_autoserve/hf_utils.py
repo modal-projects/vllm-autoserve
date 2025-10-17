@@ -94,6 +94,7 @@ def inspect_hf_repo_for_peft(repo_id: str, revision=None, token=None):
     image=hf_image.uv_pip_install(["transformers", "peft", "torch"]).add_local_python_source("vllm_autoserve"),
     volumes={
         "/root/.cache/huggingface": common.hf_cache,
+        "/merged_models": common.merged_models,
     },
 )
 def merge_model_and_save_to_volume(base_model_repo: str, peft_repo: str, revision=None, token=None):
@@ -104,9 +105,7 @@ def merge_model_and_save_to_volume(base_model_repo: str, peft_repo: str, revisio
     print(f"Merging PEFT adapter from {peft_repo} into base model {base_model_repo}...")
 
     merged_model_name = peft_repo + "-merged"
-    hf_subdir = peft_repo.replace("/", "--")
-    # hf cache structure
-    hf_cache_path = f"/root/.cache/huggingface/hub/models--{merged_model_name}"
+    merged_path = f"/merged-models/{merged_model_name}"
 
     # 1) load base model (use device_map and dtype for large models)
     print("Loading base model...")
@@ -140,8 +139,20 @@ def merge_model_and_save_to_volume(base_model_repo: str, peft_repo: str, revisio
     merged_model = model_with_adapter.merge_and_unload()
 
     # 4) save merged model + tokenizer
-    print(f"Saving merged model to {hf_cache_path} ...")
-    merged_model.save_pretrained(hf_cache_path)
+    print(f"Saving merged model to {merged_path} ...")
+    merged_model.save_pretrained(merged_path)
     print("Saving tokenizer...")
-    tokenizer.save_pretrained(hf_cache_path)
+    tokenizer.save_pretrained(merged_path)
+
+    import subprocess
+    print(subprocess.run(
+        ["ls", "-lah", "."],
+        capture_output=True,
+        text=True,
+    ).stdout)
+    print(subprocess.run(
+        ["ls", "-lah", "merged_models"],
+        capture_output=True,
+        text=True,
+    ).stdout)
     return hf_cache_path

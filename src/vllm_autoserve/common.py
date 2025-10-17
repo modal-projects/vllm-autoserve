@@ -5,6 +5,7 @@ from dataclasses import dataclass
 app = modal.App("vllm-autoserve")
 hf_utils_app = modal.App("vllm-autoserve-hf-utils")
 hf_cache = modal.Volume.from_name("huggingface-cache", create_if_missing=True)
+merged_models = modal.Volume.from_name("merged-models", create_if_missing=True)
 hf_secret_name = os.environ.get("VLLM_AUTOSERVE_SECRET", "autoserve-hf-secret")
 hf_secret = modal.Secret.from_name(hf_secret_name)
 vllm_gateway_auth = modal.Secret.from_name(
