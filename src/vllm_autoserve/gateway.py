@@ -11,9 +11,6 @@ gateway_image = (
     .uv_pip_install("fastapi", "huggingface_hub", "httpx")
     .add_local_python_source("vllm_autoserve")
 )
-vllm_gateway_auth = modal.Secret.from_name(
-    "vllm-gateway-auth", required_keys=["VLLM_GATEWAY_AUTH"]
-)
 pool_status_cache = modal.Dict.from_name(
     "vllm-gateway-poolstatus", create_if_missing=True
 )
@@ -43,7 +40,7 @@ with gateway_image.imports():
 @common.app.cls(
     image=gateway_image,
     volumes={"/root/.cache/huggingface": common.hf_cache},
-    secrets=[vllm_gateway_auth, common.hf_secret],
+    secrets=[common.vllm_gateway_auth, common.hf_secret],
     min_containers=1,
 )
 @modal.concurrent(max_inputs=800)

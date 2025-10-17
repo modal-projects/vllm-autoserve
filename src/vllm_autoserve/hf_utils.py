@@ -80,7 +80,7 @@ def inspect_hf_repo_for_peft(repo_id: str, revision=None, token=None):
         result["notes"] += "adapter_model weights found without full model config -> likely adapter. "
 
     # --- 4️⃣ Determine full model ---
-    if not result["is_peft_adapter"] and "config.json" in files and "tokenizer_config.json" in files:
+    if "config.json" in files and "tokenizer_config.json" in files:
         result["is_full_model"] = True
 
     return PeftInfo(**result)

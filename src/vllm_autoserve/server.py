@@ -23,7 +23,7 @@ with vllm_image.imports():
     image=vllm_image,
     timeout=60 * 60,  # 1 hour, for downloads
     scaledown_window=15 * 60,  # 15 minutes
-    secrets=[common.hf_secret],
+    secrets=[common.hf_secret, common.vllm_gateway_auth],
     volumes={
         "/root/.cache/huggingface": common.hf_cache,
     }
